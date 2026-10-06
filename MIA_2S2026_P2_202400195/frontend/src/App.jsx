@@ -1,177 +1,97 @@
-import { useState, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import './App.css'
+import { api } from './api'
+import { DiskMark } from './components/Icons'
+import Console from './components/Console'
+import Login from './components/Login'
+import Explorer from './components/Explorer'
+import Journal from './components/Journal'
+import Loss from './components/Loss'
 
-const API_URL = 'http://localhost:8080'
-
-const PLACEHOLDER = `mkdisk -size=3000 -unit=K -path=/home/user/Disco1.mia
-fdisk -size=300 -path=/home/user/Disco1.mia -name=Particion1
-mount -path=/home/user/Disco1.mia -name=Particion1
-mkfs -id=951A`
+const TABS = [
+  { key: 'consola', label: 'consola' },
+  { key: 'explorador', label: 'visualizador', needsLogin: true },
+  { key: 'journaling', label: 'journaling' },
+  { key: 'loss', label: 'loss' },
+]
 
 function App() {
-  const [input, setInput] = useState('')
-  const [output, setOutput] = useState('')
-  const [running, setRunning] = useState(false)
+  const [view, setView] = useState('consola')
+  const [session, setSession] = useState({ active: false })
   const [connected, setConnected] = useState(null)
-  const [lastFileName, setLastFileName] = useState('')
-  const [stats, setStats] = useState(null)
-  const fileInputRef = useRef(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  async function checkConnection() {
+  const refreshSession = useCallback(async () => {
     try {
-      const res = await fetch(API_URL + '/')
-      setConnected(res.ok)
+      const s = await api.session()
+      setSession(s)
+      setConnected(true)
+      return s
     } catch {
       setConnected(false)
+      return { active: false }
     }
+  }, [])
+
+  useEffect(() => { refreshSession() }, [refreshSession])
+
+  // Tras ejecutar comandos: la sesión pudo cambiar (unmount) y el visualizador debe refrescarse
+  async function handleExecuted() {
+    const s = await refreshSession()
+    setRefreshKey((k) => k + 1)
+    if (!s.active && view === 'explorador') setView('consola')
   }
 
-  async function handleExecute() {
-    if (!input.trim()) return
-    setRunning(true)
-    if (connected === null) await checkConnection()
-    try {
-      const res = await fetch(API_URL + '/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commands: input }),
-      })
-      const data = await res.json()
-      setConnected(true)
-      setOutput((prev) => (prev ? prev + '\n' : '') + (data.output || data.error || ''))
-      if (typeof data.total === 'number') {
-        setStats({ ok: data.ok, errors: data.errors, total: data.total })
-      }
-    } catch (err) {
-      setConnected(false)
-      setStats(null)
-      setOutput((prev) => (prev ? prev + '\n' : '') + `# no se pudo conectar con ${API_URL} — ¿está corriendo ./server?\n`)
-    } finally {
-      setRunning(false)
-    }
+  async function logout() {
+    await api.logout().catch(() => {})
+    await refreshSession()
+    setView('consola')
   }
 
-  function handleClear() {
-    setInput('')
-    setOutput('')
-    setLastFileName('')
-    setStats(null)
-  }
-
-  function handleFileChoose() {
-    fileInputRef.current?.click()
-  }
-
-  function handleFileSelected(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    setLastFileName(file.name)
-    const reader = new FileReader()
-    reader.onload = (ev) => setInput(ev.target.result)
-    reader.readAsText(file)
-    e.target.value = ''
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      handleExecute()
-    }
+  function openTab(t) {
+    setView(t.needsLogin && !session.active ? 'login' : t.key)
   }
 
   return (
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <DiskMark />
+          <span className="brand-mark"><DiskMark /></span>
           <span className="brand-name">ExtreamFS</span>
+          <span className="brand-sub">online</span>
         </div>
-        <div className={`status status-${connected === null ? 'unknown' : connected ? 'ok' : 'down'}`}>
-          <span className="status-dot" />
-          {connected === null ? 'sin verificar' : connected ? 'conectado' : 'sin conexión'}
+        <nav className="tabs">
+          {TABS.map((t) => (
+            <button key={t.key} className={`tab ${view === t.key ? 'is-active' : ''}`} onClick={() => openTab(t)}>{t.label}</button>
+          ))}
+        </nav>
+        <div className="session-box">
+          <span className={`status status-${connected === null ? 'unknown' : connected ? 'ok' : 'down'}`}>
+            <span className="status-dot" />
+            {connected === null ? 'sin verificar' : connected ? 'conectado' : 'sin conexión'}
+          </span>
+          {session.active ? (
+            <>
+              <span className="session-user">{session.user}<span className="dim"> @ {session.id}</span></span>
+              <button className="btn btn-danger" onClick={logout}>cerrar sesión</button>
+            </>
+          ) : (
+            <button className="btn btn-login" onClick={() => setView('login')}>iniciar sesión</button>
+          )}
         </div>
       </header>
 
-      <main className="layout">
-        <section className="console">
-          <div className="pane">
-            <div className="pane-head">
-              <span>entrada</span>
-              <div className="pane-actions">
-                <button className="btn" onClick={handleFileChoose}>elegir archivo .smia</button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".smia,.txt"
-                  onChange={handleFileSelected}
-                  style={{ display: 'none' }}
-                />
-                {lastFileName && <span className="filename">{lastFileName}</span>}
-              </div>
-            </div>
-            <textarea
-              className="editor"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={PLACEHOLDER}
-              spellCheck={false}
-            />
-          </div>
-
-          <div className="toolbar">
-            <button className="btn btn-primary" onClick={handleExecute} disabled={running}>
-              {running ? 'ejecutando…' : 'ejecutar'}
-            </button>
-            <button className="btn" onClick={handleClear}>limpiar</button>
-            <span className="hint">ctrl/cmd + enter para ejecutar</span>
-          </div>
-
-          <div className="pane">
-            <div className="pane-head">
-              <span>salida</span>
-              {stats && (
-                <div className="stats">
-                  <span className="stat stat-ok">{stats.ok} exitosos</span>
-                  <span className="stat stat-err">{stats.errors} con error</span>
-                  <span className="stat">{stats.total} en total</span>
-                </div>
-              )}
-            </div>
-            <pre className="editor output">{output || '# los resultados de tus comandos aparecerán aquí'}</pre>
-          </div>
-        </section>
-
-        <aside className="sidebar">
-          <div className="sidebar-block">
-            <h2>referencia rápida</h2>
-            <dl className="cmd-list">
-              <dt>mkdisk</dt><dd>-size -unit -path -fit</dd>
-              <dt>fdisk</dt><dd>-size -path -name -type -unit -fit</dd>
-              <dt>mount</dt><dd>-path -name</dd>
-              <dt>mkfs</dt><dd>-id -type</dd>
-              <dt>login</dt><dd>-user -pass -id</dd>
-              <dt>mkfile</dt><dd>-path -r -size -cont</dd>
-              <dt>rep</dt><dd>-name -path -id -path_file_ls</dd>
-            </dl>
-          </div>
-          <div className="sidebar-block">
-            <h2>notas</h2>
-            <p className="note">El backend corre en <code>localhost:8080</code>. Levántalo con <code>./server</code> desde <code>backend/</code> antes de ejecutar comandos aquí.</p>
-          </div>
-        </aside>
-      </main>
+      <Console hidden={view !== 'consola'} onExecuted={handleExecuted} connected={connected} setConnected={setConnected} />
+      {view === 'login' && (
+        <Login
+          onSuccess={(s) => { setSession(s); setRefreshKey((k) => k + 1); setView('explorador') }}
+          onCancel={() => setView('consola')}
+        />
+      )}
+      {session.active && <Explorer hidden={view !== 'explorador'} refreshKey={refreshKey} />}
+      {view === 'journaling' && <Journal refreshKey={refreshKey} defaultId={session.active ? session.id : ''} />}
+      {view === 'loss' && <Loss refreshKey={refreshKey} onExecuted={handleExecuted} />}
     </div>
-  )
-}
-
-function DiskMark() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <circle cx="11" cy="11" r="9.5" stroke="var(--amber)" strokeWidth="1.4" />
-      <circle cx="11" cy="11" r="5.5" stroke="var(--amber)" strokeWidth="1.4" />
-      <circle cx="11" cy="11" r="1.6" fill="var(--amber)" />
-    </svg>
   )
 }
 

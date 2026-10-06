@@ -16,3 +16,6 @@ frontend/build/
 .idea/
 *.swp
 .DS_Store
+
+# Registro de discos creados (estado local del servidor)
+backend/discos_registrados.txt

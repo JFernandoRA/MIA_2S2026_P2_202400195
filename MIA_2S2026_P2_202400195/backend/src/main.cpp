@@ -7,6 +7,7 @@
 #include "path_commands.hpp"
 #include "rep_commands.hpp"
 #include "ext3_commands.hpp"
+#include "viewer_api.hpp"
 #include <sstream>
 #include <iostream>
 
@@ -40,7 +41,10 @@ CmdResult runCommand(const ParsedCommand& cmd) {
 // Ejecuta un comando y, si tuvo éxito y la partición es EXT3, lo registra en el journal
 CmdResult dispatch(const ParsedCommand& cmd) {
     CmdResult res = runCommand(cmd);
-    if (res.success) journalCommand(cmd);
+    if (res.success) {
+        journalCommand(cmd);
+        updateDiskRegistry(cmd);
+    }
     return res;
 }
 
@@ -134,6 +138,51 @@ int main() {
         resp["error"] = err;
         resp["entries"] = entries;
         res.set_content(resp.dump(), "application/json");
+    });
+
+    auto sendJson = [](httplib::Response& res, const json& j) { res.set_content(j.dump(), "application/json"); };
+    auto bodyOf = [](const httplib::Request& req) { try { return json::parse(req.body); } catch (...) { return json::object(); } };
+
+    svr.Post("/login", [&](const httplib::Request& req, httplib::Response& res) {
+        json b = bodyOf(req);
+        ParsedCommand cmd;
+        cmd.name = "login";
+        cmd.params["id"] = b.value("id", "");
+        cmd.params["user"] = b.value("user", "");
+        cmd.params["pass"] = b.value("pass", "");
+        CmdResult r = cmdLogin(cmd);
+        sendJson(res, {{"ok", r.success}, {"message", r.message}, {"session", sessionJson()}});
+    });
+
+    svr.Post("/logout", [&](const httplib::Request&, httplib::Response& res) {
+        ParsedCommand cmd;
+        cmd.name = "logout";
+        CmdResult r = cmdLogout(cmd);
+        sendJson(res, {{"ok", r.success}, {"message", r.message}, {"session", sessionJson()}});
+    });
+
+    svr.Get("/session", [&](const httplib::Request&, httplib::Response& res) { sendJson(res, sessionJson()); });
+
+    svr.Get("/disks", [&](const httplib::Request&, httplib::Response& res) { sendJson(res, {{"ok", true}, {"disks", disksJson()}}); });
+
+    svr.Get("/ls", [&](const httplib::Request& req, httplib::Response& res) {
+        if (!currentSession().active) return sendJson(res, {{"ok", false}, {"error", "debe iniciar sesión"}});
+        std::string err;
+        json items = listFolderJson(req.get_param_value("id"), req.has_param("path") ? req.get_param_value("path") : "/", err);
+        sendJson(res, {{"ok", err.empty()}, {"error", err}, {"items", items}});
+    });
+
+    svr.Get("/file", [&](const httplib::Request& req, httplib::Response& res) {
+        if (!currentSession().active) return sendJson(res, {{"ok", false}, {"error", "debe iniciar sesión"}});
+        std::string err;
+        std::string content = readFileJson(req.get_param_value("id"), req.get_param_value("path"), err);
+        sendJson(res, {{"ok", err.empty()}, {"error", err}, {"content", content}});
+    });
+
+    svr.Get("/bitmaps", [&](const httplib::Request& req, httplib::Response& res) {
+        std::string err;
+        json bm = bitmapsJson(req.get_param_value("id"), err);
+        sendJson(res, {{"ok", err.empty()}, {"error", err}, {"bitmaps", bm}});
     });
 
     std::cout << "ExtreamFS backend escuchando en http://localhost:8080" << std::endl;
