@@ -46,3 +46,22 @@ inline CmdResult cmdJournaling(const ParsedCommand& cmd) {
     }
     return {true, out.str()};
 }
+
+// ---------------------- LOSS ----------------------
+inline CmdResult cmdLoss(const ParsedCommand& cmd) {
+    std::string perr;
+    if (!validateParams(cmd, {"id"}, perr)) return {false, "LOSS: " + perr};
+    if (!hasParam(cmd, "id")) return {false, "LOSS: falta el parámetro obligatorio -id"};
+    FSContext ctx = resolveFS(getParam(cmd, "id"));
+    if (!ctx.ok) return {false, "LOSS: " + ctx.error};
+    if (!isExt3(ctx)) return {false, "LOSS: la partición no está formateada en EXT3"};
+
+    // Bitmaps, inodos y bloques son contiguos: se limpian de una vez; superbloque y journal se conservan
+    long start = ctx.sb.s_bm_inode_start;
+    long end = ctx.sb.s_block_start + (long)ctx.sb.s_blocks_count * ctx.sb.s_block_s;
+    std::vector<char> zeros(end - start, 0);
+    if (!writeBuffer(ctx.diskPath, start, zeros.data(), (long)zeros.size()))
+        return {false, "LOSS: no se pudo escribir en el disco"};
+    return {true, "LOSS: se simuló la pérdida del sistema EXT3 en " + getParam(cmd, "id") + " (" +
+                  std::to_string(zeros.size()) + " bytes de bitmaps, inodos y bloques limpiados con \\0)"};
+}

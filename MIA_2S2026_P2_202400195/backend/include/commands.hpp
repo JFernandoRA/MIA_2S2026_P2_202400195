@@ -3,11 +3,14 @@
 #include "structs.hpp"
 #include "disk_utils.hpp"
 #include "mount_manager.hpp"
+#include "session.hpp"
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
 #include <cstdlib>
 #include <ctime>
+#include <vector>
+#include <algorithm>
 
 struct CmdResult {
     bool success;
@@ -101,9 +104,142 @@ inline CmdResult cmdRmdisk(const ParsedCommand& cmd) {
 }
 
 // ---------------------- FDISK ----------------------
+
+// true si alguna partición montada apunta a ese disco y nombre
+inline bool isMountedByName(const std::string& path, const std::string& name) {
+    for (auto& kv : mountState().mounted)
+        if (kv.second.diskPath == path && kv.second.partitionName == name) return true;
+    return false;
+}
+
+// Rellena con '\0' una región del disco (delete=full)
+inline void zeroRegion(const std::string& path, long start, long size) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(start);
+    std::vector<char> zeros(std::min(size, 1L << 20), 0);
+    while (size > 0) {
+        long chunk = std::min(size, (long)zeros.size());
+        file.write(zeros.data(), chunk);
+        size -= chunk;
+    }
+}
+
+inline CmdResult fdiskDelete(const std::string& path, const std::string& name, const std::string& mode) {
+    if (mode != "fast" && mode != "full") return {false, "FDISK: -delete solo acepta fast o full"};
+    bool full = (mode == "full");
+    if (isMountedByName(path, name)) return {false, "FDISK: la partición \"" + name + "\" está montada, desmóntela primero (unmount)"};
+
+    MBR mbr;
+    if (!readMBR(path, mbr)) return {false, "FDISK: no se pudo leer el MBR de " + path};
+
+    for (int i = 0; i < 4; i++) {
+        Partition& p = mbr.mbr_partitions[i];
+        if (p.part_start == -1 || std::string(p.part_name) != name) continue;
+        long start = p.part_start, size = p.part_s;
+        bool wasExt = (p.part_type == 'E');
+        p = Partition();
+        if (!writeMBR(path, mbr)) return {false, "FDISK: falló al escribir el MBR"};
+        if (full) zeroRegion(path, start, size);
+        return {true, "FDISK: partición \"" + name + "\" eliminada (" + mode + ")" +
+                      (wasExt ? ", junto con sus particiones lógicas" : "")};
+    }
+
+    // Si no es primaria/extendida, se busca entre las lógicas
+    for (int i = 0; i < 4; i++) {
+        Partition& ext = mbr.mbr_partitions[i];
+        if (ext.part_start == -1 || ext.part_type != 'E') continue;
+        long prev = -1, cursor = ext.part_start;
+        while (cursor != -1) {
+            EBR ebr;
+            readEBR(path, cursor, ebr);
+            if (ebr.part_start != -1 && std::string(ebr.part_name) == name) {
+                long dataStart = ebr.part_start, dataSize = ebr.part_s;
+                if (prev == -1) {
+                    // el primer EBR se queda en su lugar (vacío) porque la extendida empieza con él
+                    EBR empty;
+                    empty.part_next = ebr.part_next;
+                    writeEBR(path, cursor, empty);
+                } else {
+                    EBR prevEbr;
+                    readEBR(path, prev, prevEbr);
+                    prevEbr.part_next = ebr.part_next;
+                    writeEBR(path, prev, prevEbr);
+                    if (full) zeroRegion(path, cursor, sizeof(EBR));
+                }
+                if (full) zeroRegion(path, dataStart, dataSize);
+                return {true, "FDISK: partición lógica \"" + name + "\" eliminada (" + mode + ")"};
+            }
+            prev = cursor;
+            cursor = ebr.part_next;
+        }
+    }
+    return {false, "FDISK: no existe una partición llamada \"" + name + "\" en " + path};
+}
+
+inline CmdResult fdiskAdd(const std::string& path, const std::string& name, long delta) {
+    if (delta == 0) return {false, "FDISK: -add no puede ser 0"};
+    MBR mbr;
+    if (!readMBR(path, mbr)) return {false, "FDISK: no se pudo leer el MBR de " + path};
+    std::string what = delta > 0 ? "agregaron " : "quitaron ";
+
+    for (int i = 0; i < 4; i++) {
+        Partition& p = mbr.mbr_partitions[i];
+        if (p.part_start == -1 || std::string(p.part_name) != name) continue;
+        long newSize = (long)p.part_s + delta;
+        if (newSize <= 0) return {false, "FDISK: no se puede quitar ese espacio, la partición quedaría con tamaño negativo o cero"};
+        if (delta > 0) {
+            long limit = mbr.mbr_tamano;
+            for (int j = 0; j < 4; j++) {
+                const Partition& q = mbr.mbr_partitions[j];
+                if (j != i && q.part_start != -1 && q.part_start > p.part_start) limit = std::min(limit, (long)q.part_start);
+            }
+            if (p.part_start + newSize > limit)
+                return {false, "FDISK: no hay espacio libre suficiente después de la partición (disponible: " +
+                               std::to_string(limit - p.part_start - p.part_s) + " bytes)"};
+        } else if (p.part_type == 'E') {
+            long usedEnd = p.part_start + (long)sizeof(EBR);
+            long cursor = p.part_start;
+            while (cursor != -1) {
+                EBR ebr;
+                readEBR(path, cursor, ebr);
+                if (ebr.part_start != -1) usedEnd = std::max(usedEnd, (long)ebr.part_start + ebr.part_s);
+                cursor = ebr.part_next;
+            }
+            if (p.part_start + newSize < usedEnd) return {false, "FDISK: no se puede reducir la extendida, cortaría sus particiones lógicas"};
+        }
+        p.part_s = (int)newSize;
+        if (!writeMBR(path, mbr)) return {false, "FDISK: falló al escribir el MBR"};
+        return {true, "FDISK: se " + what + std::to_string(std::labs(delta)) + " bytes a \"" + name +
+                      "\" (nuevo tamaño: " + std::to_string(newSize) + " bytes)"};
+    }
+
+    for (int i = 0; i < 4; i++) {
+        Partition& ext = mbr.mbr_partitions[i];
+        if (ext.part_start == -1 || ext.part_type != 'E') continue;
+        long cursor = ext.part_start;
+        while (cursor != -1) {
+            EBR ebr;
+            readEBR(path, cursor, ebr);
+            if (ebr.part_start != -1 && std::string(ebr.part_name) == name) {
+                long newSize = (long)ebr.part_s + delta;
+                if (newSize <= 0) return {false, "FDISK: no se puede quitar ese espacio, la partición quedaría con tamaño negativo o cero"};
+                long limit = ebr.part_next != -1 ? ebr.part_next : (long)ext.part_start + ext.part_s;
+                if (delta > 0 && ebr.part_start + newSize > limit)
+                    return {false, "FDISK: no hay espacio libre suficiente después de la partición lógica"};
+                ebr.part_s = (int)newSize;
+                writeEBR(path, cursor, ebr);
+                return {true, "FDISK: se " + what + std::to_string(std::labs(delta)) + " bytes a \"" + name +
+                              "\" (nuevo tamaño: " + std::to_string(newSize) + " bytes)"};
+            }
+            cursor = ebr.part_next;
+        }
+    }
+    return {false, "FDISK: no existe una partición llamada \"" + name + "\" en " + path};
+}
+
 inline CmdResult cmdFdisk(const ParsedCommand& cmd) {
     std::string perr;
-    if (!validateParams(cmd, {"size", "unit", "path", "type", "fit", "name"}, perr)) return {false, "FDISK: " + perr};
+    if (!validateParams(cmd, {"size", "unit", "path", "type", "fit", "name", "delete", "add"}, perr)) return {false, "FDISK: " + perr};
     if (!hasParam(cmd, "path")) return {false, "FDISK: falta el parámetro obligatorio -path"};
     if (!hasParam(cmd, "name")) return {false, "FDISK: falta el parámetro obligatorio -name"};
 
@@ -111,6 +247,18 @@ inline CmdResult cmdFdisk(const ParsedCommand& cmd) {
     if (!fileExists(path)) return {false, "FDISK: el disco " + path + " no existe"};
 
     std::string name = getParam(cmd, "name");
+
+    // -delete y -add tienen prioridad sobre la creación (se ignora -size)
+    if (hasParam(cmd, "delete")) return fdiskDelete(path, name, toLower(getParam(cmd, "delete")));
+    if (hasParam(cmd, "add")) {
+        std::string u = toLower(getParam(cmd, "unit", "k"));
+        long mult = u == "b" ? 1 : u == "k" ? 1024 : u == "m" ? 1024L * 1024L : 0;
+        if (mult == 0) return {false, "FDISK: -unit inválido, use B, K o M"};
+        long addVal;
+        try { addVal = std::stol(getParam(cmd, "add")); }
+        catch (...) { return {false, "FDISK: -add debe ser un número"}; }
+        return fdiskAdd(path, name, addVal * mult);
+    }
 
     std::string type = toLower(getParam(cmd, "type", "p"));
     char typeChar;
@@ -342,4 +490,32 @@ inline CmdResult cmdMounted(const ParsedCommand& cmd) {
         first = false;
     }
     return {true, oss.str()};
+}
+
+// ---------------------- UNMOUNT ----------------------
+inline CmdResult cmdUnmount(const ParsedCommand& cmd) {
+    std::string perr;
+    if (!validateParams(cmd, {"id"}, perr)) return {false, "UNMOUNT: " + perr};
+    if (!hasParam(cmd, "id")) return {false, "UNMOUNT: falta el parámetro obligatorio -id"};
+    std::string id = getParam(cmd, "id");
+
+    MountState& st = mountState();
+    auto it = st.mounted.find(id);
+    if (it == st.mounted.end()) return {false, "UNMOUNT: no existe una partición montada con id " + id};
+
+    MBR mbr;
+    if (readMBR(it->second.diskPath, mbr)) {
+        Partition& p = mbr.mbr_partitions[it->second.partitionIndex];
+        p.part_status = '0';
+        p.part_correlative = 0;
+        memset(p.part_id, 0, sizeof(p.part_id));
+        writeMBR(it->second.diskPath, mbr);
+    }
+    std::string name = it->second.partitionName;
+    st.mounted.erase(it);
+    Session& sess = currentSession();
+    bool closed = sess.active && sess.partitionId == id;
+    if (closed) sess = Session();
+    return {true, "UNMOUNT: partición \"" + name + "\" (id " + id + ") desmontada" +
+                  (closed ? " y se cerró la sesión activa en ella" : "")};
 }

@@ -31,6 +31,8 @@ CmdResult runCommand(const ParsedCommand& cmd) {
     if (cmd.name == "mkdir")   return cmdMkdir(cmd);
     if (cmd.name == "rep")     return cmdRep(cmd);
     if (cmd.name == "journaling") return cmdJournaling(cmd);
+    if (cmd.name == "unmount") return cmdUnmount(cmd);
+    if (cmd.name == "loss")    return cmdLoss(cmd);
 
     return {false, "ERROR: comando \"" + cmd.name + "\" no reconocido"};
 }

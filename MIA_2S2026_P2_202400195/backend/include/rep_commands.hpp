@@ -150,7 +150,7 @@ inline CmdResult repBitmap(FSContext& ctx, bool isInode, const std::string& outP
     for (long i = 0; i < count; i++) {
         char bit;
         readByte(ctx.diskPath, start + i, bit);
-        oss << bit << " ";
+        oss << (bit == '1' ? '1' : '0') << " ";
         if ((i + 1) % 20 == 0) oss << "\n";
     }
     oss << "\n";
