@@ -120,6 +120,13 @@ export default function Console({ hidden, onExecuted, connected, setConnected })
             <dt>mkfs</dt><dd>-id -type -fs=2fs|3fs</dd>
             <dt>mkdir</dt><dd>-path -p</dd>
             <dt>mkfile</dt><dd>-path -r -size -cont</dd>
+            <dt>remove</dt><dd>-path</dd>
+            <dt>rename</dt><dd>-path -name</dd>
+            <dt>copy</dt><dd>-path -destino</dd>
+            <dt>move</dt><dd>-path -destino</dd>
+            <dt>find</dt><dd>-path -name (? *)</dd>
+            <dt>chown</dt><dd>-path -usuario -r</dd>
+            <dt>chmod</dt><dd>-path -ugo -r</dd>
             <dt>loss</dt><dd>-id</dd>
             <dt>journaling</dt><dd>-id</dd>
             <dt>rep</dt><dd>-name -path -id -path_file_ls</dd>

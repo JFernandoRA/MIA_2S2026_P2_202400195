@@ -7,12 +7,14 @@ import Login from './components/Login'
 import Explorer from './components/Explorer'
 import Journal from './components/Journal'
 import Loss from './components/Loss'
+import Reports from './components/Reports'
 
 const TABS = [
   { key: 'consola', label: 'consola' },
   { key: 'explorador', label: 'visualizador', needsLogin: true },
   { key: 'journaling', label: 'journaling' },
   { key: 'loss', label: 'loss' },
+  { key: 'reportes', label: 'reportes' },
 ]
 
 function App() {
@@ -91,6 +93,7 @@ function App() {
       {session.active && <Explorer hidden={view !== 'explorador'} refreshKey={refreshKey} />}
       {view === 'journaling' && <Journal refreshKey={refreshKey} defaultId={session.active ? session.id : ''} />}
       {view === 'loss' && <Loss refreshKey={refreshKey} onExecuted={handleExecuted} />}
+      {view === 'reportes' && <Reports refreshKey={refreshKey} />}
     </div>
   )
 }

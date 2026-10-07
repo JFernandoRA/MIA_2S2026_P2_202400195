@@ -1,0 +1,78 @@
+# ===== PRUEBA BLOQUES 1 y 2 (EXT3, journal, fdisk add/delete, unmount, loss) =====
+# Antes de correrla: rm -rf ~/discos_p2  y reiniciar el servidor
+
+# --- Preparacion ---
+mkdisk -size=10 -unit=M -fit=FF -path=/home/fercho/discos_p2/Disco1.mia
+fdisk -size=3 -unit=M -path=/home/fercho/discos_p2/Disco1.mia -name=Part1
+fdisk -size=2 -unit=M -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+fdisk -size=3 -unit=M -path=/home/fercho/discos_p2/Disco1.mia -name=Ext -type=E
+fdisk -size=500 -path=/home/fercho/discos_p2/Disco1.mia -name=Log1 -type=L
+fdisk -size=500 -path=/home/fercho/discos_p2/Disco1.mia -name=Log2 -type=L
+mount -path=/home/fercho/discos_p2/Disco1.mia -name=Part1
+mount -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+
+# --- MKFS -fs (OK: 951A en EXT3, 952A en EXT2) ---
+mkfs -id=951A -fs=3fs
+mkfs -id=952A
+# ERROR: fs invalido
+mkfs -id=952A -fs=4fs
+
+# --- Journal (OK: se registran mkdir, mkfile, mkgrp, mkusr) ---
+login -user=root -pass=123 -id=951A
+mkdir -p -path=/home/user/docs
+mkfile -path=/home/user/docs/a.txt -size=20
+mkgrp -name=usuarios
+mkusr -user=user1 -pass=abc -grp=usuarios
+# OK: debe mostrar 6 transacciones
+journaling -id=951A
+# ERROR: 952A es EXT2
+journaling -id=952A
+
+# --- FDISK -add ---
+# ERROR: no hay espacio libre despues de Part1
+fdisk -add=1 -unit=M -path=/home/fercho/discos_p2/Disco1.mia -name=Part1
+# OK: quita 500 KB (ignora -size)
+fdisk -add=-500 -size=10 -unit=K -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+# OK: ahora si hay espacio libre despues de Part2
+fdisk -add=200 -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+# ERROR: quedaria tamano negativo
+fdisk -add=-5 -unit=M -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+# OK: logica Log2 crece dentro de la extendida
+fdisk -add=100 -path=/home/fercho/discos_p2/Disco1.mia -name=Log2
+
+# --- FDISK -delete ---
+# ERROR: Part2 esta montada
+fdisk -delete=fast -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+# ERROR: valor invalido
+fdisk -delete=otro -path=/home/fercho/discos_p2/Disco1.mia -name=Log1
+# OK: elimina logica
+fdisk -delete=full -path=/home/fercho/discos_p2/Disco1.mia -name=Log1
+# ERROR: ya no existe
+fdisk -delete=fast -path=/home/fercho/discos_p2/Disco1.mia -name=Log1
+
+# --- LOSS (bitmaps antes y despues) ---
+rep -id=951A -path=/home/fercho/discos_p2/reportes/bm_inode_antes.txt -name=bm_inode
+loss -id=951A
+rep -id=951A -path=/home/fercho/discos_p2/reportes/bm_inode_despues.txt -name=bm_inode
+# ERROR: el archivo se perdio
+cat -file1=/home/user/docs/a.txt
+# OK: el journal sobrevive al LOSS
+journaling -id=951A
+# ERROR: LOSS solo en EXT3
+loss -id=952A
+
+# --- UNMOUNT ---
+# OK: desmonta y cierra la sesion
+unmount -id=951A
+# ERROR: ya no existe
+unmount -id=951A
+# ERROR: no hay sesion
+mkdir -path=/x
+# OK: solo debe salir 952A
+mounted
+unmount -id=952A
+# OK: ahora si se puede borrar Part2 y la extendida
+fdisk -delete=full -path=/home/fercho/discos_p2/Disco1.mia -name=Part2
+fdisk -delete=fast -path=/home/fercho/discos_p2/Disco1.mia -name=Ext
+mount -path=/home/fercho/discos_p2/Disco1.mia -name=Part1
+rep -id=953A -path=/home/fercho/discos_p2/reportes/disk.png -name=disk

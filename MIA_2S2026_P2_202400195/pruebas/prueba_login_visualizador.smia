@@ -1,0 +1,37 @@
+# ===== PRUEBA LOGIN GRAFICO + VISUALIZADOR + JOURNALING + LOSS =====
+# Antes: reiniciar ./server para que los IDs salgan como 951A y 952A
+
+# --- Disco con dos primarias y una extendida ---
+mkdisk -size=12 -unit=M -fit=BF -path=/home/fercho/discos_p2/DiscoVisual.mia
+fdisk -size=4 -unit=M -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Datos
+fdisk -size=3 -unit=M -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Respaldo
+fdisk -size=3 -unit=M -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Ext -type=E
+fdisk -size=1 -unit=M -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Logica1 -type=L
+
+# --- Montar y formatear (Datos en EXT3, Respaldo en EXT2) ---
+mount -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Datos
+mount -path=/home/fercho/discos_p2/DiscoVisual.mia -name=Respaldo
+mkfs -id=951A -fs=3fs
+mkfs -id=952A
+
+# --- Contenido en Datos (951A) ---
+login -user=root -pass=123 -id=951A
+mkgrp -name=alumnos
+mkusr -user=fer -pass=abc -grp=alumnos
+mkdir -p -path=/home/fer/documentos
+mkdir -p -path=/home/fer/fotos
+mkdir -p -path=/etc/config
+mkfile -path=/home/fer/documentos/notas.txt -size=45
+mkfile -path=/home/fer/documentos/tarea.txt -size=120
+mkfile -path=/etc/config/sistema.conf -size=30
+mkfile -path=/leeme.txt -size=20
+logout
+
+# --- Contenido en Respaldo (952A) ---
+login -user=root -pass=123 -id=952A
+mkdir -p -path=/backups/2026
+mkfile -path=/backups/2026/respaldo.txt -size=64
+logout
+
+# --- Listo: inicie sesion con el boton (951A root 123, o 951A fer abc) ---
+mounted

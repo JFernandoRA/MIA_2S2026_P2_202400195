@@ -1,0 +1,106 @@
+# ===== PRUEBA BLOQUE 4: REMOVE, RENAME, COPY, MOVE, FIND, CHOWN, CHMOD =====
+# Antes: reiniciar ./server y borrar ~/discos_p2 (para que el id sea 951A)
+
+mkdisk -size=8 -unit=M -path=/home/fercho/discos_p2/Disco4.mia
+fdisk -size=5 -unit=M -path=/home/fercho/discos_p2/Disco4.mia -name=Part1
+mount -path=/home/fercho/discos_p2/Disco4.mia -name=Part1
+mkfs -id=951A -fs=3fs
+
+# --- Preparacion como root ---
+login -user=root -pass=123 -id=951A
+mkgrp -name=usuarios
+mkusr -user=user1 -pass=abc -grp=usuarios
+mkusr -user=user2 -pass=abc -grp=usuarios
+mkdir -p -path=/home/user/docs
+mkfile -path=/home/user/docs/a.txt -size=10
+mkfile -path=/home/user/docs/b.txt -size=20
+mkfile -path=/home/user/docs/c.txt -size=30
+mkdir -p -path=/home/user/documents
+mkfile -path=/home/user/documents/a.txt -size=15
+mkfile -path=/home/user/documents/b.txt -size=25
+mkdir -path=/home/images
+
+# --- FIND (con espacios alrededor del =, como el enunciado) ---
+# OK: todo el arbol
+find -path = "/" -name = "*"
+# OK: solo nombres de 1 caracter + extension
+find -path="/" -name="?.*"
+# ERROR: ruta no existe
+find -path=/nada -name=*
+
+# --- RENAME ---
+# OK
+rename -path=/home/user/docs/a.txt -name=b1.txt
+# ERROR: b1.txt ya existe
+rename -path=/home/user/docs/c.txt -name=b1.txt
+# ERROR: nombre de mas de 11 caracteres
+rename -path=/home/user/docs/c.txt -name=nombremuylargo.txt
+# ERROR: no existe
+rename -path=/home/user/docs/zzz.txt -name=x.txt
+
+# --- CHMOD / CHOWN (root) ---
+# OK: b.txt queda 224 (sin lectura para el dueno), como en el ejemplo de copy
+chmod -path=/home/user/documents/b.txt -ugo=224
+# ERROR: ugo invalido
+chmod -path=/home -ugo=999
+# OK: user1 queda como dueno de todo /home
+chown -path=/home -r -usuario=user1
+# ERROR: usuario no existe
+chown -path=/home -usuario=fantasma
+logout
+
+# --- COPY como user1 ---
+login -user=user1 -pass=abc -id=951A
+# OK: copia documents a images, b.txt NO se copia (224 sin lectura)
+copy -path="/home/user/documents" -destino="/home/images"
+# ERROR: ya existe documents en images
+copy -path="/home/user/documents" -destino="/home/images"
+# ERROR: destino no existe
+copy -path=/home/user/docs -destino=/noexiste
+# ERROR: carpeta dentro de si misma
+copy -path=/home/user -destino=/home/user/docs
+# OK: verificar resultado de la copia (solo a.txt)
+find -path=/home/images -name=*
+
+# --- MOVE como user1 ---
+# OK: mueve docs (con b1.txt, b.txt, c.txt) a images
+move -path=/home/user/docs -destino=/home/images
+# OK: el contenido sigue accesible en la nueva ruta
+cat -file1=/home/images/docs/b1.txt
+# ERROR: ya no existe en el origen
+move -path=/home/user/docs -destino=/home/images
+# ERROR: destino es un archivo
+move -path=/home/user/documents -destino=/home/images/docs/c.txt
+# ERROR: user1 no es dueno de users.txt
+chown -path=/users.txt -usuario=user1
+logout
+
+# --- REMOVE con permisos parciales ---
+login -user=root -pass=123 -id=951A
+mkdir -path=/home/user/x
+mkfile -path=/home/user/x/libre.txt -size=5
+chown -path=/home/user/x -r -usuario=user1
+mkfile -path=/home/user/x/privado.txt -size=5
+logout
+login -user=user1 -pass=abc -id=951A
+# ERROR: borra libre.txt, pero conserva x y privado.txt
+remove -PatH=/home/user/x
+# OK: solo queda privado.txt
+find -path=/home/user/x -name=*
+# OK: archivo
+remove -path=/home/images/docs/b1.txt
+# OK: carpeta completa con todo su contenido
+remove -path=/home/images
+# OK: comando pegado al parametro, como el ejemplo del enunciado
+remove-path=/home/user/documents/a.txt
+# ERROR: no existe
+remove -path=/home/images
+# ERROR: la raiz no se borra
+remove -path=/
+logout
+
+# --- Resultado final ---
+login -user=root -pass=123 -id=951A
+find -path=/ -name=*
+journaling -id=951A
+logout

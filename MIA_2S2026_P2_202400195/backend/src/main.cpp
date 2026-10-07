@@ -8,6 +8,9 @@
 #include "rep_commands.hpp"
 #include "ext3_commands.hpp"
 #include "viewer_api.hpp"
+#include "file_commands.hpp"
+#include "report_registry.hpp"
+#include <fstream>
 #include <sstream>
 #include <iostream>
 
@@ -34,6 +37,13 @@ CmdResult runCommand(const ParsedCommand& cmd) {
     if (cmd.name == "journaling") return cmdJournaling(cmd);
     if (cmd.name == "unmount") return cmdUnmount(cmd);
     if (cmd.name == "loss")    return cmdLoss(cmd);
+    if (cmd.name == "remove")  return cmdRemove(cmd);
+    if (cmd.name == "rename")  return cmdRename(cmd);
+    if (cmd.name == "copy")    return cmdCopy(cmd);
+    if (cmd.name == "move")    return cmdMove(cmd);
+    if (cmd.name == "find")    return cmdFind(cmd);
+    if (cmd.name == "chown")   return cmdChown(cmd);
+    if (cmd.name == "chmod")   return cmdChmod(cmd);
 
     return {false, "ERROR: comando \"" + cmd.name + "\" no reconocido"};
 }
@@ -44,6 +54,7 @@ CmdResult dispatch(const ParsedCommand& cmd) {
     if (res.success) {
         journalCommand(cmd);
         updateDiskRegistry(cmd);
+        registerReport(cmd);
     }
     return res;
 }
@@ -183,6 +194,19 @@ int main() {
         std::string err;
         json bm = bitmapsJson(req.get_param_value("id"), err);
         sendJson(res, {{"ok", err.empty()}, {"error", err}, {"bitmaps", bm}});
+    });
+
+    svr.Get("/reports", [&](const httplib::Request&, httplib::Response& res) { sendJson(res, {{"ok", true}, {"reports", reportsJson()}}); });
+
+    svr.Get("/report", [&](const httplib::Request& req, httplib::Response& res) {
+        std::string path = req.get_param_value("path");
+        std::ifstream f(path, std::ios::binary);
+        if (!isRegisteredReport(path) || !f) {
+            res.status = 404;
+            return res.set_content("reporte no encontrado", "text/plain");
+        }
+        std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        res.set_content(data, mimeFor(path));
     });
 
     std::cout << "ExtreamFS backend escuchando en http://localhost:8080" << std::endl;

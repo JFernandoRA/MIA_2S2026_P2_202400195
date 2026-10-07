@@ -21,6 +21,8 @@ export const api = {
   file: (id, path) => request('/file' + q({ id, path })),
   journaling: (id) => request('/journaling' + q({ id })),
   bitmaps: (id) => request('/bitmaps' + q({ id })),
+  reports: () => request('/reports'),
+  reportUrl: (path, t) => API_URL + '/report' + q({ path, t }),
 }
 
 export function formatBytes(n) {

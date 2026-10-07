@@ -68,6 +68,24 @@ inline ParsedCommand parseCommand(const std::string& rawLine) {
         return result;
     }
 
+    // Tolera "remove-path=/x" (comando pegado al primer parámetro, como en un ejemplo del enunciado)
+    size_t glued = tokens[0].find('-');
+    if (glued != std::string::npos && glued > 0) {
+        tokens.insert(tokens.begin() + 1, tokens[0].substr(glued));
+        tokens[0] = tokens[0].substr(0, glued);
+    }
+
+    // Tolera espacios alrededor del '=': "-path = /" se une como "-path=/"
+    std::vector<std::string> merged;
+    for (size_t i = 0; i < tokens.size(); i++) {
+        std::string cur = tokens[i];
+        while (i + 1 < tokens.size() && i > 0 && cur[0] == '-' &&
+               (tokens[i + 1][0] == '=' || (cur.back() == '=' && tokens[i + 1][0] != '-')))
+            cur += tokens[++i];
+        merged.push_back(cur);
+    }
+    tokens = merged;
+
     result.name = toLower(tokens[0]);
 
     for (size_t i = 1; i < tokens.size(); i++) {

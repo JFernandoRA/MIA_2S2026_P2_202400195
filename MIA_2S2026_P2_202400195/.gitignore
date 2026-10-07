@@ -19,3 +19,4 @@ frontend/build/
 
 # Registro de discos creados (estado local del servidor)
 backend/discos_registrados.txt
+backend/reportes_generados.txt
